@@ -11,15 +11,17 @@ for library in ['_relabel', '_async']:
 
 from .data import get_data  # noqa
 from .history import History  # noqa
+from .dbhistory import DBHistory  # noqa
 from .pool import AsyncIOPool  # noqa
 from .metis import metis, permute  # noqa
 from .utils import compute_micro_f1, gen_masks, dropout  # noqa
 from .loader import SubgraphLoader, EvalSubgraphLoader  # noqa
-from .models import ScalableGNN
+from .models import ScalableGNN, DBScalableGNN
 
 __all__ = [
     'get_data',
     'History',
+    'DBHistory',
     'AsyncIOPool',
     'metis',
     'permute',
@@ -29,5 +31,6 @@ __all__ = [
     'SubgraphLoader',
     'EvalSubgraphLoader',
     'ScalableGNN',
+    'DBScalableGNN',
     '__version__',
 ]

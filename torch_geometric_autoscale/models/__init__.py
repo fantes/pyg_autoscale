@@ -1,4 +1,5 @@
 from .base import ScalableGNN
+from .dbbase import DBScalableGNN
 from .gcn import GCN
 from .gat import GAT
 from .appnp import APPNP
@@ -8,6 +9,7 @@ from .pna_jk import PNA_JK
 
 __all__ = [
     'ScalableGNN',
+    'DBScalableGNN',
     'GCN',
     'GAT',
     'APPNP',
