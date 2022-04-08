@@ -6,7 +6,7 @@ import torch
 from torch import Tensor
 from torch_sparse import SparseTensor
 
-from torch_geometric_autoscale import DBHistory, AsyncIOPool
+from torch_geometric_autoscale import DBHistory, DBAsyncIOPool, AsyncDBHistory
 from torch_geometric_autoscale import SubgraphLoader, EvalSubgraphLoader
 
 
@@ -39,30 +39,54 @@ class DBScalableGNN(torch.nn.Module):
             Needs to be set in order to make use of asynchronous memory
             transfers. (default: :obj:`None`)
     """
-    def __init__(self, num_nodes: int, hidden_channels: int, num_layers: int,
-                 pool_size: Optional[int] = None,
-                 buffer_size: Optional[int] = None, device=None, multi_db = True,
-                 db_value_from_tensor = None, tensor_from_dbvalue = None, list_from_dbvalue = None):
+
+    def __init__(
+        self,
+        num_nodes: int,
+        hidden_channels: int,
+        num_layers: int,
+        pool_size: Optional[int] = None,
+        buffer_size: Optional[int] = None,
+        device=None,
+        multi_db=True,
+        db_value_from_tensor=None,
+        tensor_from_dbvalue=None,
+        list_from_dbvalue=None,
+        asyncio=False,
+    ):
         super().__init__()
 
         self.num_nodes = num_nodes
         self.hidden_channels = hidden_channels
         self.num_layers = num_layers
-        #TODO:ASYNC
-        #self.pool_size = num_layers - 1 if pool_size is None else pool_size
-        #self.buffer_size = buffer_size
+        # TODO:ASYNC
+        self.pool_size = num_layers if pool_size is None else pool_size
+        self.buffer_size = buffer_size
 
-        self.dbhistory = DBHistory(self.num_nodes, self.num_layers, self.hidden_channels, multi_db=multi_db, db_value_from_tensor = db_value_from_tensor, tensor_from_dbvalue = tensor_from_dbvalue, list_from_dbvalue = list_from_dbvalue)
+        if not asyncio:
+            self.dbhistory = DBHistory(
+                self.num_nodes,
+                self.num_layers,
+                self.hidden_channels,
+                multi_db=multi_db,
+                db_value_from_tensor=db_value_from_tensor,
+                tensor_from_dbvalue=tensor_from_dbvalue,
+                list_from_dbvalue=list_from_dbvalue,
+            )
+        else:
+            self.dbhistory = AsyncDBHistory(
+                self.num_nodes, self.num_layers, self.hidden_channels
+            )
 
-        #TODO:ASYNC
-        #self.pool: Optional[AsyncIOPool] = None
-        #self._async = False
-        #self.__out: Optional[Tensor] = None
+        # TODO:ASYNC
+        self.pool: Optional[DBAsyncIOPool] = None
+        self._async = asyncio
+        # self.__out: Optional[Tensor] = None
 
-    #TODO ASYNC
-    #@property
-    #def emb_device(self):
-    #    return self.histories[0].emb.device
+    # TODO ASYNC
+    @property
+    def emb_device(self):
+        return self.histories[0].emb.device
 
     @property
     def device(self):
@@ -70,14 +94,11 @@ class DBScalableGNN(torch.nn.Module):
 
     def _apply(self, fn: Callable) -> None:
         super()._apply(fn)
-        #TODO:ASYNC
-        # We only initialize the AsyncIOPool in case histories are on CPU:
-        # if (str(self.emb_device) == 'cpu' and str(self.device)[:4] == 'cuda'
-        #         and self.pool_size is not None
-        #         and self.buffer_size is not None):
-        #     self.pool = AsyncIOPool(self.pool_size, self.buffer_size,
-        #                             self.histories[0].embedding_dim)
-        #     self.pool.to(self.device)
+        if self._async:
+            self.pool = DBAsyncIOPool(
+                self.pool_size, self.buffer_size, self.hidden_channels
+            )
+            self.pool.to(self.device)
         return self
 
     def reset_parameters(self):
@@ -129,9 +150,9 @@ class DBScalableGNN(torch.nn.Module):
         """
 
         if loader is not None:
-            print('not doing mini inference')
+            print("not doing mini inference")
 
-        self._async = False
+        # self._async = False
         # TODO:ASYNC
         # We only perform asynchronous history transfer in case the following
         # conditions are met:
@@ -148,23 +169,30 @@ class DBScalableGNN(torch.nn.Module):
         # if self._async:
         #     for hist in self.histories:
         #         self.pool.async_pull(hist.emb, None, None, n_id[batch_size:])
+        for i in range(self.num_layers):
+            self.pool.async_pull_from_db(i, None, None, n_id[batch_size:])
 
         out = self.forward(x, adj_t, batch_size, n_id, offset, count, **kwargs)
 
+        self.pool.synchronize_push_to_db()
         # TODO:ASYNC
         # if self._async:
         #     for hist in self.histories:
         #         self.pool.synchronize_push()
 
-        #self._async = False
+        # self._async = False
 
         return out
 
-    def push_and_pull(self, layer:int, x: Tensor,
-                      batch_size: Optional[int] = None,
-                      n_id: Optional[Tensor] = None,
-                      offset: Optional[Tensor] = None,
-                      count: Optional[Tensor] = None) -> Tensor:
+    def push_and_pull(
+        self,
+        layer: int,
+        x: Tensor,
+        batch_size: Optional[int] = None,
+        n_id: Optional[Tensor] = None,
+        offset: Optional[Tensor] = None,
+        count: Optional[Tensor] = None,
+    ) -> Tensor:
         r"""Pushes and pulls information from :obj:`x` to :obj:`history` and
         vice versa."""
 
@@ -172,18 +200,32 @@ class DBScalableGNN(torch.nn.Module):
             return x  # Do nothing...
 
         if n_id is None and x.size(0) == self.num_nodes:
-            self.dbhistory.push(x, n_id=None, layer = layer)
+            self.dbhistory.push(x, n_id=None, layer=layer)
             return x
 
         assert n_id is not None
 
         if batch_size is None:
-            self.dbhistory.push(x, n_id, layer = layer)
+            self.dbhistory.push(x, n_id, layer=layer)
             return x
 
-        self.dbhistory.push(x[:batch_size], n_id = n_id[:batch_size], layer = layer, offset=offset, count=count)
-        h = self.dbhistory.pull(n_id = n_id[batch_size:], layer = layer)
-        return torch.cat([x[:batch_size], h], dim=0)
+        if not self._async:
+            self.dbhistory.push(
+                x[:batch_size],
+                n_id=n_id[:batch_size],
+                layer=layer,
+                offset=offset,
+                count=count,
+            )
+            h = self.dbhistory.pull(n_id=n_id[batch_size:], layer=layer)
+            return torch.cat([x[:batch_size], h], dim=0)
+
+        else:
+            out = self.pool.synchronize_pull_from_db()[: n_id.numel() - batch_size]
+            self.pool.async_push_to_db(layer, x[:batch_size], offset, count)
+            out = torch.cat([x[:batch_size], out], dim=0)
+            self.pool.free_pull_from_db()
+            return out
 
         # TODO:ASYNC
         # if not self._async:
@@ -201,12 +243,11 @@ class DBScalableGNN(torch.nn.Module):
     @property
     def _out(self):
         if self.__out is None:
-            self.__out = torch.empty(self.num_nodes, self.out_channels,
-                                     pin_memory=True)
+            self.__out = torch.empty(self.num_nodes, self.out_channels, pin_memory=True)
         return self.__out
 
-
     @torch.no_grad()
-    def forward_layer(self, layer: int, x: Tensor, adj_t: SparseTensor,
-                      state: Dict[str, Any]) -> Tensor:
+    def forward_layer(
+        self, layer: int, x: Tensor, adj_t: SparseTensor, state: Dict[str, Any]
+    ) -> Tensor:
         raise NotImplementedError

@@ -4,6 +4,7 @@
 #include <future>
 #include <queue>
 #include <thread>
+#include <iostream>
 
 // A simple C++11 Thread Pool implementation with `num_workers=1`.
 // See: https://github.com/progschj/ThreadPool
@@ -36,6 +37,7 @@ inline Thread::Thread() : stop(false) {
         task = std::move(this->tasks.front());
         this->tasks.pop();
       }
+      std::cout << "lauhching task in thread\n";
       task();
     }
   });
