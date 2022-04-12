@@ -7,7 +7,7 @@ class GasDb {
 public:
   GasDb(std::string path);
   ~GasDb();
-  torch::Tensor pull(int64_t n_id, int layer);
+  torch::Tensor pull(int64_t n_id, int layer, int edim);
   void push(torch::Tensor x,  int layer, torch::Tensor offset, torch::Tensor count);
   void reset();
 private:

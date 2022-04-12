@@ -169,12 +169,21 @@ class DBScalableGNN(torch.nn.Module):
         # if self._async:
         #     for hist in self.histories:
         #         self.pool.async_pull(hist.emb, None, None, n_id[batch_size:])
-        for i in range(self.num_layers):
-            self.pool.async_pull_from_db(i, None, None, n_id[batch_size:])
+        # print("DBBASE [CALL]", flush=True)
+        # print("offset", offset)
+        # print("count", count)
+        # print("batch_size", batch_size)
+        # print("indices", n_id[batch_size:])
+        # print("len(all_indices)", n_id.numel())
+        if self._async:
+            for i in range(self.num_layers):
+                # print("DBBASE pulling at layer", i, flush=True)
+                self.pool.async_pull_from_db(i, None, None, n_id[batch_size:])
 
         out = self.forward(x, adj_t, batch_size, n_id, offset, count, **kwargs)
 
-        self.pool.synchronize_push_to_db()
+        if self._async:
+            self.pool.synchronize_push_to_db()
         # TODO:ASYNC
         # if self._async:
         #     for hist in self.histories:

@@ -37,7 +37,7 @@ inline Thread::Thread() : stop(false) {
         task = std::move(this->tasks.front());
         this->tasks.pop();
       }
-      std::cout << "lauhching task in thread\n";
+      //std::cout << "[THREAD] lauhching task in thread\n";
       task();
     }
   });
@@ -64,8 +64,10 @@ template <class F> void Thread::run(F &&f) {
 }
 
 void Thread::synchronize() {
+  //std::cout << "[THREAD] SYNCHRONIZE" << std::endl;
   if (results.empty())
     return;
   results.front().get();
   results.pop();
 }
+

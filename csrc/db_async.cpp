@@ -24,7 +24,7 @@ void db_synchronize() {
 
 GasDb::GasDb(std::string path)
 {
-  std::cout << "constructing gasdb\n";
+  //std::cout << "constructing gasdb\n" << std::flush;
   this->options.create_if_missing = true;
   this->options.error_if_exists = true;
   rocksdb::Status status = rocksdb::DB::Open(this->options, path, &this->db);
@@ -33,7 +33,7 @@ GasDb::GasDb(std::string path)
 
 GasDb::~GasDb()
 {
-  std::cout << "destructing gasdb\n";
+  //std::cout << "destructing gasdb\n" << std::flush;
   rocksdb::Status status = this->db->Close();
   delete this->db;
 }
@@ -61,19 +61,19 @@ torch::Tensor GasDb::tensor_from_db_value(std::string dbval)
 }
 
 
-torch::Tensor GasDb::pull(int64_t n_id, int layer)
+torch::Tensor GasDb::pull(int64_t n_id, int layer, int edim)
 {
-  std::cout << "pulling from db node  "<< n_id <<  " at layer " << layer << std::endl;
   std::string v;
   rocksdb::Status s = this->db->Get(rocksdb::ReadOptions(), this->key(n_id, layer), &v);
-  return this->tensor_from_db_value(v);
+  if (s.IsNotFound())
+          return torch::zeros({edim});
+  torch::Tensor t =  this->tensor_from_db_value(v);
+  return t;
 }
 
 
 void GasDb::push(torch::Tensor x, int layer, torch::Tensor ioffset, torch::Tensor icount)
 {
-  std::cout << "pushing to db  at layer " << layer << " offsets: "<< ioffset << "   counts: " << icount << std::endl;
-
   torch::Tensor offset = ioffset.to(torch::kInt64).contiguous();
   torch::Tensor count = icount.to(torch::kInt64).contiguous();
   int src_o = 0;
@@ -89,7 +89,6 @@ void GasDb::push(torch::Tensor x, int layer, torch::Tensor ioffset, torch::Tenso
     }
   rocksdb::Status s = this->db->Write(rocksdb::WriteOptions(), &batch);
 }
-
 
 
 void db_read_async(int64_t layer,
@@ -127,14 +126,16 @@ void delete_db()
   delete(gasdb);
 }
 
+
+
 void simple_push(torch::Tensor t, int64_t n_id, int64_t layer)
 {
   gasdb->push(t,  layer, torch::tensor({n_id}), torch::tensor({1}));
 }
 
-void simple_pull( int64_t n_id, int64_t layer, torch::Tensor t)
+void simple_pull( int64_t n_id, int64_t layer, torch::Tensor t, int64_t edim)
 {
-  t.copy_(gasdb->pull(n_id, layer));
+  t.copy_(gasdb->pull(n_id, layer,edim));
 }
 
 static auto registry =
