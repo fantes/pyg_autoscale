@@ -1,0 +1,6 @@
+syntax = "proto3";
+
+message Vector {
+  repeated float val = 1;
+}
+ 

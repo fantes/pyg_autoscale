@@ -4,7 +4,8 @@ import torch
 from torch import Tensor
 from torch.cuda import Stream
 
-db_synchronize = torch.ops.torch_geometric_autoscale.db_synchronize
+db_synchronize_push = torch.ops.torch_geometric_autoscale.db_synchronize_push
+db_synchronize_pull = torch.ops.torch_geometric_autoscale.db_synchronize_pull
 db_read_async = torch.ops.torch_geometric_autoscale.db_read_async
 db_write_async = torch.ops.torch_geometric_autoscale.db_write_async
 
@@ -75,27 +76,14 @@ class DBAsyncIOPool(torch.nn.Module):
     @torch.no_grad()
     def synchronize_pull_from_db(self) -> Tensor:
         # Synchronize the next pull command:
-        # print("[DBPOOL] sync pulling layer", self._pull_queue[0][1], flush=True)
         idx = self._pull_queue[0][0]
-        # print("[DBPOOL] sync stream", self._pull_stream(idx), flush=True)
-        db_synchronize()
+        db_synchronize_pull()
         torch.cuda.synchronize(self._pull_stream(idx))
-        # print("[DBPOOL] sync thread", flush=True)
-        # print(
-        #     "[DBPOOL] returning cuda buffer of layer",
-        #     self._pull_queue[0][1],
-        #     flush=True,
-        # )
         return self._cuda_buffer(idx)
 
     @torch.no_grad()
     def free_pull_from_db(self) -> None:
         # Free the buffer space and start pulling from remaining queue:
-        # print(
-        #     "[DBPOOL] freeing pull request of layer ",
-        #     self._pull_queue[0][1],
-        #     flush=True,
-        # )
         self._pull_queue.pop(0)
         if len(self._pull_queue) >= self.pool_size:
             data = self._pull_queue[self.pool_size - 1]
@@ -109,10 +97,8 @@ class DBAsyncIOPool(torch.nn.Module):
         self, layer: int, src: Tensor, offset: Tensor, count: Tensor
     ) -> None:
         # Start pushing `src` to ([offset, count] and index positions to `dst`:
-        # print("[DBPOOL] lauchning async push to db", flush=True)
         self._push_index = (self._push_index + 1) % self.pool_size
-        # print("[DBPOOL] sync previous push idx", self._push_index, flush=True)
-        self.synchronize_push_to_db(self._push_index)
+        # self.synchronize_push_to_db(self._push_index)
         db_write_async(layer, src, offset, count)
 
     @torch.no_grad()
@@ -122,7 +108,7 @@ class DBAsyncIOPool(torch.nn.Module):
                 self.synchronize_push_to_db(idx)
             self._push_index = -1
         else:
-            db_synchronize()
+            db_synchronize_push()
             # torch.cuda.synchronize(self._push_stream(idx))
             # self._push_cache[idx] = None
 

@@ -7,7 +7,6 @@ import os
 import shutil
 from torch import Tensor
 
-synchronize = torch.ops.torch_geometric_autoscale.db_synchronize
 read_async = torch.ops.torch_geometric_autoscale.db_read_async
 write_async = torch.ops.torch_geometric_autoscale.db_write_async
 init_db = torch.ops.torch_geometric_autoscale.init_db
@@ -23,6 +22,7 @@ class AsyncDBHistory(torch.nn.Module):
         num_layers: int,
         embedding_dim: int,
         device=None,
+        db_path="/tmp/dbhist.db",
     ):
         super().__init__()
 
@@ -31,13 +31,18 @@ class AsyncDBHistory(torch.nn.Module):
         self.embedding_dim = embedding_dim
 
         self._device = torch.device("cpu")
+        self._dbpath = db_path
         self.reset_parameters()
+        # init_db(self._dbpath, self.num_layers)
 
     def reset_parameters(self):
+        # print("calling delete_db", flush=True)
         delete_db()
-        if os.path.exists("/tmp/dbhist.db"):
-            shutil.rmtree("/tmp/dbhist.db")
-        init_db("/tmp/dbhist.db")
+        # print("deleting dirs", flush=True)
+        if os.path.exists(self._dbpath):
+            shutil.rmtree(self._dbpath)
+        # print("calling init_db", flush=True)
+        init_db(self._dbpath, self.num_layers)
 
     def _apply(self, fn):
         # Set the `_device` of the module without transfering `self.emb`.

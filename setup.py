@@ -15,13 +15,11 @@ WITH_CUDA = torch.cuda.is_available() and CUDA_HOME is not None
 def get_extensions():
     Extension = CppExtension
     define_macros = []
-    libraries = ["rocksdb"]
+    libraries = ["rocksdb", "protobuf"]
     extra_compile_args = {
         "cxx": ["-I/home/infantes/.local/lib/python3.8/site-packages/torch/include"]
     }
-    extra_link_args = [
-        "-lrocksdb",
-    ]
+    extra_link_args = ["-lrocksdb", "-lprotobuf"]
 
     info = parallel_info()
     if "parallel backend: OpenMP" in info and "OpenMP not found" not in info:
@@ -38,7 +36,7 @@ def get_extensions():
         define_macros += [("WITH_CUDA", None)]
         nvcc_flags = os.getenv("NVCC_FLAGS", "")
         nvcc_flags = [] if nvcc_flags == "" else nvcc_flags.split(" ")
-        nvcc_flags += ["-arch=sm_35", "--expt-relaxed-constexpr"]
+        nvcc_flags += ["--expt-relaxed-constexpr"]
         extra_compile_args["nvcc"] = nvcc_flags
 
     extensions_dir = osp.join("csrc")

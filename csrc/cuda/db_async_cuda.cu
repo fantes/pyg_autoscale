@@ -7,23 +7,30 @@
 #include "../gasdb.h"
 
 extern GasDb * gasdb;
+extern int num_push_threads;
 
-
-Thread &db_getThread() {
+MultiThread &db_getPushThread() {
+  static MultiThread thread(num_push_threads);
+  return thread;
+}
+Thread &db_getPullThread() {
   static Thread thread;
   return thread;
 }
 
 
-void db_synchronize_cuda() {
+void db_synchronize_pull_cuda() {
   //std::cout << "[DB_ASYNC_CUDA] syncing thread\n"<< std::flush;
-  db_getThread().synchronize();
+  db_getPullThread().synchronize();
+}
+void db_synchronize_push_cuda() {
+  //std::cout << "[DB_ASYNC_CUDA] syncing thread\n"<< std::flush;
+  db_getPushThread().synchronize();
 }
 
 void db_read_async_cuda(int64_t layer, torch::optional<torch::Tensor> optional_offset,
                         torch::optional<torch::Tensor> optional_count,
                         torch::Tensor index, torch::Tensor dst) {
-
 
   AT_ASSERTM(!index.is_cuda(), "Index tensor must be a CPU tensor");
   AT_ASSERTM(dst.is_cuda(), "Target tensor must be a CUDA tensor");
@@ -47,6 +54,8 @@ void db_read_async_cuda(int64_t layer, torch::optional<torch::Tensor> optional_o
     numel = count.sum().data_ptr<int64_t>()[0];
   }
 
+  if (numel + index.numel() > dst.size(0))
+    std::cout << "numel: " << numel << "   index.numel(): " << index.numel() << "  dst.size(0): " << dst.size(0) << std::endl << std::flush;
   AT_ASSERTM(numel + index.numel() <= dst.size(0),
              "Target tensor size too small");
 
@@ -56,7 +65,7 @@ void db_read_async_cuda(int64_t layer, torch::optional<torch::Tensor> optional_o
 
   //std::cout << "[DB_READ_ASYNC_CUDA] queuing db_read_async_cuda at layer " << layer << std::endl<< std::flush;
   AT_DISPATCH_ALL_TYPES(dst.scalar_type(), "db_read_async", [&] {
-    db_getThread().run([=] {
+    db_getPullThread().run([=] {
       //std::cout << "[DB_READ_ASYNC_CUDA | INTHREAD] populate src tensor ;  cudaMemcpyAsync at layer " << layer << std::endl << std::flush;
       auto options = torch::TensorOptions().dtype(torch::kFloat32);
       auto dst_data = dst.data_ptr<scalar_t>();
@@ -83,10 +92,13 @@ void db_read_async_cuda(int64_t layer, torch::optional<torch::Tensor> optional_o
 
         for (int64_t i = 0; i < offset.numel(); i++)
           for (int64_t j = 0; j < count_data[i]; j++)
-            src.index_put_({offset_data[i]+j},gasdb->pull(offset_data[i]+j, layer, esize));
+            {
+              src.index_put_({offset_data[i]+j},gasdb->pull(offset_data[i]+j, layer, esize));
+            }
       }
       for (int64_t i = 0; i < index.numel(); i++)
         {
+          //std::cout << gasdb.size() << std::endl << std::flush;
           src.index_put_({numel+i},gasdb->pull(index[i].item<int64_t>(), layer,esize));
         }
 
@@ -114,9 +126,10 @@ void db_write_async_cuda(int64_t layer, torch::Tensor src, torch::Tensor offset,
 
   //std::cout << "[DB_WRITE_ASYNC_CUDA] queuing db_write_async_cuda at layer " << layer << std::endl;
   AT_DISPATCH_ALL_TYPES(src.scalar_type(), "db_write_async", [&] {
-    db_getThread().run([=] {
+    db_getPushThread().run([=] {
       //std::cout << "[DB_WRITE_ASYNC_CUDA | INTHREAD] lauching  (get cuda tensor ; push to db) at layer " << layer << std::endl<<std::flush;
 
+      //std::cout << "allocating dst etnsor" << std::endl << std::flush;
       auto options = torch::TensorOptions().dtype(torch::kFloat32).pinned_memory(true);
       int64_t numel = torch::sum(count).item<int64_t>();
       int64_t esize = src.numel()/src.size(0);
@@ -125,9 +138,13 @@ void db_write_async_cuda(int64_t layer, torch::Tensor src, torch::Tensor offset,
       auto dst_data = dst.data_ptr<scalar_t>();
       auto src_data = src.data_ptr<scalar_t>();
 
+      //std::cout << "copyng from cuda " << std::endl << std::flush;
       cudaMemcpy(dst_data, src_data, numel*esize*sizeof(scalar_t), cudaMemcpyDeviceToHost);
+      //std::cout << "copyng from cuda done " << std::endl << std::flush;
+
 
       gasdb->push(dst, layer, offset, count);
+      //std::cout << "write to db done " << std::endl << std::flush;
     });
   });
 }

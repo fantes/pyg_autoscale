@@ -2,7 +2,8 @@
 
 #include <torch/extension.h>
 
-void db_synchronize_cuda();
+void db_synchronize_push_cuda();
+void db_synchronize_pull_cuda();
 void db_read_async_cuda(int64_t layer,
                         torch::optional<torch::Tensor> optional_offset,
                         torch::optional<torch::Tensor> optional_count,

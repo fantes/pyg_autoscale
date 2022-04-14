@@ -53,15 +53,18 @@ class DBScalableGNN(torch.nn.Module):
         tensor_from_dbvalue=None,
         list_from_dbvalue=None,
         asyncio=False,
+        db_path="/tmp/dbhist.db_",
+        debug_threading=False,
     ):
         super().__init__()
 
         self.num_nodes = num_nodes
         self.hidden_channels = hidden_channels
         self.num_layers = num_layers
-        # TODO:ASYNC
         self.pool_size = num_layers if pool_size is None else pool_size
         self.buffer_size = buffer_size
+        self.db_path = db_path
+        self.debug_threading = debug_threading
 
         if not asyncio:
             self.dbhistory = DBHistory(
@@ -75,15 +78,15 @@ class DBScalableGNN(torch.nn.Module):
             )
         else:
             self.dbhistory = AsyncDBHistory(
-                self.num_nodes, self.num_layers, self.hidden_channels
+                self.num_nodes,
+                self.num_layers,
+                self.hidden_channels,
+                db_path=self.db_path,
             )
 
-        # TODO:ASYNC
         self.pool: Optional[DBAsyncIOPool] = None
         self._async = asyncio
-        # self.__out: Optional[Tensor] = None
 
-    # TODO ASYNC
     @property
     def emb_device(self):
         return self.histories[0].emb.device
@@ -152,44 +155,20 @@ class DBScalableGNN(torch.nn.Module):
         if loader is not None:
             print("not doing mini inference")
 
-        # self._async = False
-        # TODO:ASYNC
-        # We only perform asynchronous history transfer in case the following
-        # conditions are met:
-        # self._async = (self.pool is not None and batch_size is not None
-        #                and n_id is not None and offset is not None
-        #                and count is not None)
-
-        # if (batch_size is not None and not self._async
-        #         and str(self.emb_device) == 'cpu'
-        #         and str(self.device)[:4] == 'cuda'):
-        #     warnings.warn('Asynchronous I/O disabled, although history and '
-        #                   'model sit on different devices.')
-
-        # if self._async:
-        #     for hist in self.histories:
-        #         self.pool.async_pull(hist.emb, None, None, n_id[batch_size:])
-        # print("DBBASE [CALL]", flush=True)
-        # print("offset", offset)
-        # print("count", count)
-        # print("batch_size", batch_size)
-        # print("indices", n_id[batch_size:])
-        # print("len(all_indices)", n_id.numel())
         if self._async:
+            if self.debug_threading:
+                print("start pulling every layer", flush=True)
             for i in range(self.num_layers):
-                # print("DBBASE pulling at layer", i, flush=True)
                 self.pool.async_pull_from_db(i, None, None, n_id[batch_size:])
 
+        if self.debug_threading:
+            print("start forwarding", flush=True)
         out = self.forward(x, adj_t, batch_size, n_id, offset, count, **kwargs)
 
         if self._async:
+            if self.debug_threading:
+                print("syncing all pushes")
             self.pool.synchronize_push_to_db()
-        # TODO:ASYNC
-        # if self._async:
-        #     for hist in self.histories:
-        #         self.pool.synchronize_push()
-
-        # self._async = False
 
         return out
 
@@ -230,24 +209,17 @@ class DBScalableGNN(torch.nn.Module):
             return torch.cat([x[:batch_size], h], dim=0)
 
         else:
-            out = self.pool.synchronize_pull_from_db()[: n_id.numel() - batch_size]
+            if self.debug_threading:
+                print("launching push at layer", layer, flush=True)
             self.pool.async_push_to_db(layer, x[:batch_size], offset, count)
+            if self.debug_threading:
+                print("reading first pull at layer", layer, flush=True)
+            out = self.pool.synchronize_pull_from_db()[: n_id.numel() - batch_size]
             out = torch.cat([x[:batch_size], out], dim=0)
+            if self.debug_threading:
+                print("removing pull from pool ", flush=True)
             self.pool.free_pull_from_db()
             return out
-
-        # TODO:ASYNC
-        # if not self._async:
-        #     history.push(x[:batch_size], n_id[:batch_size], offset, count)
-        #     h = history.pull(n_id[batch_size:])
-        #     return torch.cat([x[:batch_size], h], dim=0)
-
-        # else:
-        #     out = self.pool.synchronize_pull()[:n_id.numel() - batch_size]
-        #     self.pool.async_push(x[:batch_size], offset, count, history.emb)
-        #     out = torch.cat([x[:batch_size], out], dim=0)
-        #     self.pool.free_pull()
-        #     return out
 
     @property
     def _out(self):
